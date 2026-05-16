@@ -1,0 +1,719 @@
+---
+title: "What Lifestyle Factors Predict Diabetes Risk?"
+author: "A predictive analysis by Xinyu Yuan, Adrien Rozario, Grace Yu, Gavin Schneider, Ayantu Bekelche, and Nimisokan Ojikutu"
+date: "May 6, 2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r libraries, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(rpart)
+library(scales)
+```
+
+## **Introduction**
+
+Diabetes is one of the most prevalent chronic diseases in the United States, affecting millions of individuals and contributing significantly to healthcare costs and reduced quality of life. The condition is often linked to modifiable lifestyle factors such as physical activity, diet, body weight, and substance use. Because many individuals remain undiagnosed or unaware of their risk, identifying early indicators of diabetes is critical for prevention and intervention efforts.
+
+The objective of this analysis is to investigate which lifestyle factors are most strongly associated with diabetes risk. Specifically, we examine how variables such as body mass index (BMI), physical activity, smoking, alcohol consumption, and cardiovascular-related conditions relate to diabetes prevalence. In addition to exploratory data analysis, this project applies machine learning classification models—including decision trees, support vector machines, and k-nearest neighbors—to predict diabetes outcomes.
+
+Understanding these relationships is meaningful for both individuals and healthcare providers. From a public health perspective, identifying high-risk behaviors can inform targeted interventions and preventative strategies. Clinically, predictive models can support early screening and personalized care planning. However, it is also important to recognize limitations within the dataset, including its reliance on self-reported data and potential biases related to socioeconomic factors such as income and education.
+
+## **Data Collection**
+
+The 2015 Centers for Disease Control and Prevention (CDC) Diabetes Health Indicators Dataset contains healthcare statistics and lifestyle survey information collected through the Behavioral Risk Factor Surveillance System (BRFSS). The dataset includes 253,680 observations, with each row representing an individual patient. The features consist of demographic characteristics, health conditions, and self-reported lifestyle behaviors. The primary outcome variable is diabetes status, which indicates whether an individual has been diagnosed with diabetes or not.
+
+We began by loading the dataset into R and inspecting its structure to understand the available variables and overall data composition.
+
+```{r, echo=FALSE}
+# Load data
+df <- read.csv("diabetes_indicators.csv")
+
+# Preview data
+head(df)
+```
+
+Key variables used in this analysis include measures of cardiovascular health, such as high blood pressure and high cholesterol; lifestyle behaviors, such as physical activity, smoking, and alcohol consumption; demographic characteristics, such as age and sex; and general health indicators. These variables provide a comprehensive view of factors that may influence diabetes risk. Many variables are encoded numerically in the raw dataset, where 0 often represents “No” and 1 represents “Yes.”
+
+## **Data Preparation**
+
+To prepare the dataset for analysis, we first examined the presence of missing values and found that the dataset contains no missing observations, allowing us to proceed without imputation.
+
+```{r, echo=FALSE}
+# Examine missing values
+colSums(is.na(df))
+```
+
+Next, categorical variables were encoded to improve interpretability and ensure compatibility with modeling techniques. The original diabetes variable (`Diabetes_012`) was converted into a labeled factor with three categories: “No Diabetes,” “Prediabetes,” and “Diabetes.” Additionally, a binary outcome variable (`Outcome`) was created to support classification modeling, distinguishing between diabetic and non-diabetic individuals.
+
+Binary health and lifestyle variables were also converted into factor variables with meaningful labels. Ordinal variables such as age group, education level, income, and general health were transformed into ordered factors to preserve their ranking structure.
+
+```{r, include=FALSE}
+# Encode categorical variables and create binary modeling outcome
+df <- df %>%
+  mutate(
+    Diabetes_012 = factor(
+      Diabetes_012,
+      levels = c(0, 1, 2),
+      labels = c("No Diabetes", "Prediabetes", "Diabetes")
+    ),
+    
+    Outcome = ifelse(Diabetes_012 == "Diabetes", "Diabetic", "Not_Diabetic"),
+    Outcome = factor(Outcome, levels = c("Not_Diabetic", "Diabetic")),
+    
+    HighBP = factor(HighBP, levels = c(0, 1), labels = c("No", "Yes")),
+    HighChol = factor(HighChol, levels = c(0, 1), labels = c("No", "Yes")),
+    CholCheck = factor(CholCheck, levels = c(0, 1), labels = c("No", "Yes")),
+    Smoker = factor(Smoker, levels = c(0, 1), labels = c("No", "Yes")),
+    Stroke = factor(Stroke, levels = c(0, 1), labels = c("No", "Yes")),
+    HeartDiseaseorAttack = factor(HeartDiseaseorAttack, levels = c(0, 1), labels = c("No", "Yes")),
+    PhysActivity = factor(PhysActivity, levels = c(0, 1), labels = c("No", "Yes")),
+    Fruits = factor(Fruits, levels = c(0, 1), labels = c("No", "Yes")),
+    Veggies = factor(Veggies, levels = c(0, 1), labels = c("No", "Yes")),
+    HvyAlcoholConsump = factor(HvyAlcoholConsump, levels = c(0, 1), labels = c("No", "Yes")),
+    AnyHealthcare = factor(AnyHealthcare, levels = c(0, 1), labels = c("No", "Yes")),
+    NoDocbcCost = factor(NoDocbcCost, levels = c(0, 1), labels = c("No", "Yes")),
+    DiffWalk = factor(DiffWalk, levels = c(0, 1), labels = c("No", "Yes")),
+    Sex = factor(Sex, levels = c(0, 1), labels = c("Female", "Male")),
+    
+    Age = factor(
+      Age,
+      levels = 1:13,
+      labels = c(
+        "18-24", "25-29", "30-34", "35-39", "40-44", "45-49",
+        "50-54", "55-59", "60-64", "65-69", "70-74", "75-79", "80+"
+      ),
+      ordered = TRUE
+    ),
+    
+    Education = factor(
+      Education,
+      levels = 1:6,
+      labels = c(
+        "No School/Kindergarten", "Elementary", "Some High School",
+        "High School Grad/GED", "Some College", "College Grad+"
+      ),
+      ordered = TRUE
+    ),
+    
+    Income = factor(
+      Income,
+      levels = 1:8,
+      labels = c(
+        "<$10k", "$10-14.9k", "$15-19.9k", "$20-24.9k",
+        "$25-34.9k", "$35-49.9k", "$50-74.9k", "$75k+"
+      ),
+      ordered = TRUE
+    ),
+    
+    GenHlth = factor(
+      GenHlth,
+      levels = 1:5,
+      labels = c("Excellent", "Very Good", "Good", "Fair", "Poor"),
+      ordered = TRUE
+    )
+  )
+```
+
+Finally, continuous variables, including BMI, mental health days, and physical health days, were standardized using z-score normalization. This step ensures that continuous variables are on a comparable scale, which is particularly important for distance-based models such as k-nearest neighbors.
+
+```{r, include=FALSE}
+# Standardize continuous variables for modeling
+df <- df %>%
+  mutate(
+    BMI_scaled = as.numeric(scale(BMI)),
+    MentHlth_scaled = as.numeric(scale(MentHlth)),
+    PhysHlth_scaled = as.numeric(scale(PhysHlth))
+  )
+```
+
+After preprocessing, the data was ready for analysis.
+
+## **Exploratory Data Analysis**
+
+The exploratory analysis begins by examining the overall distribution of diabetes within the population to establish a baseline understanding of prevalence. We then investigate how lifestyle and health-related factors are associated with diabetes risk, including cardiovascular indicators, BMI, physical activity, smoking, and alcohol consumption. Finally, we incorporate demographic variables to assess how diabetes prevalence varies across age and gender groups, supporting a more comprehensive and fair analysis.
+
+### **1. What proportion of individuals have diabetes?**
+
+The bar plot of diabetes status shows that the majority of individuals in the dataset do not have diabetes, with over 80% classified as diabetes-free. Approximately 15% of individuals are classified as diabetic, while the prediabetic group represents a relatively small proportion of the population. This class imbalance is important for model development because classification algorithms may become biased toward predicting the majority class. As a result, evaluation metrics such as sensitivity and specificity will be critical for assessing model performance beyond overall accuracy.
+
+```{r, echo=FALSE}
+# Calculate diabetes proportion
+diabetes_dist <- df %>%
+  count(Diabetes_012) %>%
+  mutate(prop = n / sum(n))
+
+# Bar plot of diabetes status
+ggplot(diabetes_dist, aes(x = Diabetes_012, y = prop, fill = Diabetes_012)) +
+  geom_col() +
+  scale_fill_manual(values = c("lightsteelblue", "seashell3", "indianred")) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Proportion of Diabetes Status in the Population",
+    x = "Diabetes Status",
+    y = "Proportion",
+    fill = "Diabetes Status"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+### **2. Which lifestyle factors appear most strongly associated with diabetes?**
+
+The bar plots reveal clear differences in diabetes prevalence across key lifestyle and health-related factors. Individuals with high blood pressure and high cholesterol exhibit substantially higher diabetes rates compared to those without these conditions, suggesting a strong association between cardiovascular health and diabetes risk.
+
+Physical activity is associated with lower diabetes prevalence, indicating that regular exercise may serve as a protective factor. In contrast, heavy alcohol consumption is associated with higher diabetes rates, although the magnitude of this relationship is smaller compared to cardiovascular indicators. Smoking shows a slight increase in diabetes prevalence, but the difference between smokers and non-smokers is relatively modest.
+
+Overall, high blood pressure and high cholesterol appear to have the strongest associations with diabetes risk among the factors examined, while behavioral factors such as physical activity and alcohol consumption demonstrate more moderate effects.
+
+```{r, echo=FALSE}
+# Create subset of lifestyle factors
+lifestyle_prev <- df %>%
+  select(
+    Outcome,
+    HighBP,
+    HighChol,
+    PhysActivity,
+    Smoker,
+    HvyAlcoholConsump
+  ) %>%
+  pivot_longer(
+    cols = c(HighBP, HighChol, PhysActivity, Smoker, HvyAlcoholConsump),
+    names_to = "Lifestyle_Factor",
+    values_to = "Status"
+  ) %>%
+  group_by(Lifestyle_Factor, Status) %>%
+  summarise(
+    diabetes_rate = mean(Outcome == "Diabetic"),
+    n = n(),
+    .groups = "drop"
+  )
+
+# Bar plots of diabetes rate across lifestyle factors
+ggplot(lifestyle_prev, aes(x = Status, y = diabetes_rate, fill = Status)) +
+  geom_col() +
+  facet_wrap(~ Lifestyle_Factor) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Diabetes Rate Across Lifestyle Factors",
+    x = "Risk Factor Status",
+    y = "Proportion with Diabetes",
+    fill = "Status"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("lightsteelblue", "indianred")) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+### **3. How does BMI differ between individuals with and without diabetes?**
+
+The boxplot shows a noticeable shift in BMI distribution across diabetes groups. Individuals with diabetes tend to have higher BMI values compared to both non-diabetic and prediabetic individuals. The median BMI increases progressively from the non-diabetic group to the diabetic group, indicating a positive association between higher body mass index and diabetes risk.
+
+Although there is substantial overlap in BMI distributions across groups, the overall upward shift in median and interquartile range suggests that BMI is an important contributing factor. While BMI alone does not fully distinguish between diabetes outcomes, it appears to play a meaningful role in increasing risk.
+
+```{r, echo=FALSE}
+# Box plot of BMI distribution by diabetes status
+ggplot(df, aes(x = Diabetes_012, y = BMI, fill = Diabetes_012)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("lightsteelblue", "seashell3", "indianred")) +
+  labs(
+    title = "BMI Distribution by Diabetes Status",
+    x = "Diabetes Status",
+    y = "BMI",
+    fill = "Diabetes Status"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+### **4. How do BMI and physical activity interact to influence diabetes risk?**
+
+The density plots illustrate how BMI distributions vary across diabetes status and physical activity levels. Across both physically active and inactive groups, individuals with diabetes tend to have higher BMI values compared to those without diabetes.
+
+Physically active individuals generally show slightly lower BMI distributions and a lower concentration of diabetes cases, suggesting that physical activity may mitigate some of the risk associated with higher BMI. However, the overall distribution patterns remain similar across activity levels, indicating that BMI continues to play a significant role regardless of physical activity status.
+
+These findings suggest that while physical activity may reduce diabetes risk, it does not fully offset the impact of higher BMI, highlighting the importance of considering both factors jointly.
+
+```{r, echo=FALSE}
+# Density plot of BMI distribution by diabetes status and physical activity
+ggplot(df, aes(x = BMI, fill = Diabetes_012)) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  facet_wrap(
+    ~ PhysActivity,
+    labeller = labeller(
+      PhysActivity = c("No" = "No Physical Activity", "Yes" = "Physically Active")
+    )
+  ) +
+  scale_fill_manual(values = c("lightsteelblue", "seashell3", "indianred")) +
+  labs(
+    title = "BMI Distribution by Diabetes Status and Physical Activity",
+    x = "BMI",
+    y = "Density",
+    fill = "Diabetes Status"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+### **5. How does diabetes prevalence vary by age group and gender?**
+
+The combined line plot demonstrates a strong and consistent relationship between age and diabetes prevalence across all demographic groups. Diabetes prevalence remains relatively low among younger age groups but increases steadily with age for males, females, and the overall population. The increase becomes more pronounced after approximately age 45, with the highest prevalence observed among individuals aged 65 to 79. Although prevalence declines slightly in the 80+ age group, the overall rate remains high, suggesting that age is a major risk factor for diabetes.
+
+The visualization also highlights slight differences in diabetes prevalence between genders. Across most age groups, males exhibit a slightly higher prevalence than females, while both groups generally follow the same upward trajectory as age increases. Compared to the strong effect of age, the gender differences appear relatively modest, suggesting that gender alone may not be as influential a predictor of diabetes risk as factors such as BMI, high blood pressure, or high cholesterol.
+
+Even small demographic differences remain important when developing predictive models. Machine learning algorithms learn patterns from the underlying data, meaning slight imbalances across gender groups could still influence model performance and fairness. Therefore, examining diabetes prevalence across both age and gender provides important context for evaluating whether predictive models perform equitably across populations.
+
+```{r, echo=FALSE}
+# Diabetes prevalence by age and gender
+gender_prev <- df %>%
+  group_by(Age, Sex, Diabetes_012) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Age, Sex) %>%
+  mutate(prop = n / sum(n)) %>%
+  filter(Diabetes_012 == "Diabetes")
+
+# Overall diabetes prevalence by age
+overall_prev <- df %>%
+  group_by(Age, Diabetes_012) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Age) %>%
+  mutate(prop = n / sum(n)) %>%
+  filter(Diabetes_012 == "Diabetes") %>%
+  mutate(Sex = "Overall")
+
+# Combine datasets
+combined_prev <- bind_rows(gender_prev, overall_prev)
+
+# Plot age and gender prevalence
+ggplot(combined_prev,
+       aes(x = Age, y = prop,
+           color = Sex,
+           group = Sex,
+           linetype = Sex)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_color_manual(values = c(
+    "Female" = "pink3",
+    "Male" = "lightskyblue3",
+    "Overall" = "lightgray"
+  )) +
+  scale_linetype_manual(values = c(
+    "Female" = "solid",
+    "Male" = "solid",
+    "Overall" = "dashed"
+  )) +
+  labs(
+    title = "Diabetes Prevalence Across Age Groups by Gender",
+    x = "Age Group",
+    y = "Proportion with Diabetes",
+    color = "Group",
+    linetype = "Group"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Taken together, these exploratory findings highlight several key patterns. Cardiovascular conditions such as high blood pressure and high cholesterol show the strongest associations with diabetes, while behavioral factors like physical activity and alcohol consumption demonstrate more moderate effects. BMI also exhibits a clear upward shift among diabetic individuals, and age shows a strong, consistent increase in prevalence across groups. Although gender differences in prevalence are relatively small, they remain important when considering model fairness and performance across populations.
+
+These patterns suggest that diabetes risk is influenced by a combination of physiological, behavioral, and demographic factors. To better quantify these relationships and assess their predictive power, we now transition to a machine learning approach, where these variables are used to build classification models for diabetes risk.
+
+## **Predictive Analysis**
+
+The exploratory analysis showed that diabetes risk is associated with several lifestyle, physiological, and demographic factors, including high blood pressure, high cholesterol, BMI, physical activity, age, and gender. However, exploratory graphs mainly show relationships one at a time. Predictive modeling allows us to evaluate how these factors work together to classify individuals as diabetic or non-diabetic.
+
+In this section, we first use a simplified decision tree to identify which lifestyle-related factors are most important for prediction. We then train and compare three classification models: a decision tree, support vector machine, and k-nearest neighbors model. Finally, we evaluate model performance using cross-validation, test set metrics, and a fairness analysis across gender groups.
+
+```{r, include=FALSE}
+# Set seed ONCE before sampling and splitting to keep results stable
+set.seed(123)
+
+# Keep key lifestyle + demographic predictors for modeling
+model_df <- df %>%
+  select(
+    Outcome,
+    BMI_scaled,
+    HighBP,
+    HighChol,
+    PhysActivity,
+    Smoker,
+    HvyAlcoholConsump,
+    Sex,
+    Age
+  )
+
+# Use a smaller balanced sample for faster model training and class balance
+model_df_small <- model_df %>%
+  group_by(Outcome) %>%
+  slice_sample(n = 2000) %>%
+  ungroup()
+
+# Split dataset into training and testing sets ONCE
+train_index <- createDataPartition(model_df_small$Outcome, p = 0.75, list = FALSE)
+
+train_data <- model_df_small[train_index, ]
+test_data  <- model_df_small[-train_index, ]
+
+# 3-fold cross-validation setup
+ctrl <- trainControl(
+  method = "cv",
+  number = 3,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+```
+
+### **Feature Importance**
+
+To better understand which modifiable lifestyle factors contribute most strongly to diabetes risk prediction, a simplified decision tree model was trained using only the key lifestyle variables explored during the exploratory analysis. Unlike more complex models such as support vector machines, decision trees provide interpretable variable importance measures that help identify which predictors are most influential in classification decisions.
+
+```{r, include=FALSE}
+# Lifestyle-only training dataset
+lifestyle_df <- train_data %>%
+  select(
+    Outcome,
+    BMI_scaled,
+    HighBP,
+    HighChol,
+    PhysActivity,
+    Smoker,
+    HvyAlcoholConsump
+  )
+
+# Lifestyle-focused decision tree
+lifestyle_tree <- train(
+  Outcome ~ .,
+  data = lifestyle_df,
+  method = "rpart",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 2
+)
+
+# Extract variable importance
+tree_imp <- data.frame(
+  Feature = rownames(varImp(lifestyle_tree)$importance),
+  Importance = varImp(lifestyle_tree)$importance$Overall
+)
+
+# Clean feature labels
+tree_imp$Feature <- recode(
+  tree_imp$Feature,
+  "BMI_scaled" = "BMI",
+  "HighBPYes" = "High Blood Pressure",
+  "HighCholYes" = "High Cholesterol",
+  "PhysActivityYes" = "Physical Activity",
+  "SmokerYes" = "Smoking",
+  "HvyAlcoholConsumpYes" = "Heavy Alcohol Consumption"
+)
+```
+
+#### **Horizontal Bar Plot of Lifestyle Factor Importance for Predicting Diabetes Risk**
+
+The variable importance plot ranks which lifestyle-related factors contribute most strongly to diabetes risk prediction within the decision tree model. High blood pressure emerged as the most influential predictor by a substantial margin, followed by BMI and high cholesterol. These findings indicate that cardiovascular and weight-related health indicators are strongly associated with elevated diabetes risk.
+
+Physical activity also contributed meaningfully to prediction, although its importance was lower compared to high blood pressure and BMI. In contrast, smoking and heavy alcohol consumption exhibited relatively weak influence within the model, suggesting that their predictive contribution may be smaller when considered alongside other health-related factors.
+
+Overall, these findings reinforce the patterns observed during the exploratory analysis, where high blood pressure, high cholesterol, and BMI consistently demonstrated strong relationships with diabetes prevalence. The results also illustrate how predictive modeling can help identify which modifiable lifestyle factors are most useful for assessing diabetes risk across populations.
+
+```{r, echo=FALSE}
+# Plot lifestyle factor importance
+ggplot(tree_imp,
+       aes(x = reorder(Feature, Importance),
+           y = Importance)) +
+  geom_col(fill = "honeydew3") +
+  coord_flip() +
+  labs(
+    title = "Lifestyle Factor Importance for Predicting Diabetes Risk",
+    x = "Lifestyle Factor",
+    y = "Importance"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+These findings demonstrate that several lifestyle and cardiovascular health indicators contribute meaningfully to diabetes risk prediction. Building on these insights, the next section applies multiple machine learning classification models to evaluate how accurately diabetes risk can be predicted using combined lifestyle and demographic factors.
+
+### **Classification Models**
+
+A classification model is a machine learning model that predicts which category an observation belongs to. In this analysis, the models predict whether an individual is “Diabetic” or “Not_Diabetic” based on selected health and lifestyle factors. Accuracy measures overall correctness, sensitivity measures how well the model identifies diabetic individuals, specificity measures how well it identifies non-diabetic individuals, and AUC measures the model’s overall ability to separate the two groups.
+
+Three classification models were trained to predict diabetes risk: a decision tree, a support vector machine (SVM), and a k-nearest neighbors (KNN) model. Cross-validation was applied during training to ensure that model performance was stable and not dependent on a single data split.
+
+#### **Decision Tree Model**
+
+```{r, echo=FALSE}
+# Decision Tree
+model_tree <- train(
+  Outcome ~ .,
+  data = train_data,
+  method = "rpart",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 2
+)
+
+model_tree
+```
+
+The decision tree model achieved a cross-validated ROC/AUC of approximately `r round(max(model_tree$results$ROC), 3)`, indicating moderate classification performance. This model is easier to interpret than more complex methods, but its simpler structure may limit its ability to capture complex relationships between lifestyle factors and diabetes risk.
+
+#### **Support Vector Machine Model**
+
+```{r, echo=FALSE}
+# Support Vector Machine
+model_svm <- train(
+  Outcome ~ .,
+  data = train_data,
+  method = "svmLinear",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 2,
+  preProcess = c("center", "scale")
+)
+
+model_svm
+```
+
+The support vector machine model achieved a cross-validated ROC/AUC of approximately `r round(model_svm$results$ROC[1], 3)`. Among the models tested, SVM generally provides strong classification performance because it is designed to find a boundary that separates classes as clearly as possible. In this analysis, SVM was selected for further evaluation if it achieved the highest test set AUC.
+
+#### **K-Nearest Neighbors Model**
+
+```{r, echo=FALSE}
+# K-Nearest Neighbors
+model_knn <- train(
+  Outcome ~ .,
+  data = train_data,
+  method = "knn",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 3,
+  preProcess = c("center", "scale")
+)
+
+model_knn
+```
+
+The KNN model achieved a cross-validated ROC/AUC of approximately `r round(max(model_knn$results$ROC), 3)`. KNN classifies individuals based on the outcomes of similar observations. This makes it useful for capturing nonlinear patterns, but it can be sensitive to noise and depends heavily on the quality of feature scaling.
+
+### **Cross-Validation Model Evaluation**
+
+The performance of the three classification models was first evaluated using cross-validation. Cross-validation repeatedly trains and validates models on different portions of the training data, helping estimate whether model performance is stable rather than dependent on one specific split. Model performance was compared using ROC/AUC, sensitivity, and specificity, with ROC/AUC serving as the primary metric because it measures overall classification performance across thresholds.
+
+#### **Bar Plot of Cross-Validation ROC/AUC by Model**
+
+The bar plot below illustrates the average ROC/AUC values for each model across cross-validation folds. The model with the highest ROC/AUC has the strongest ability to distinguish between diabetic and non-diabetic individuals during cross-validation.
+
+```{r, echo=FALSE}
+# Compare cross-validation results
+cv_results <- resamples(
+  list(
+    Decision_Tree = model_tree,
+    SVM = model_svm,
+    KNN = model_knn
+  )
+)
+
+# Print model performance comparison
+cv_summary <- summary(cv_results)
+
+cv_df <- data.frame(
+  Model = rownames(cv_summary$statistics$ROC),
+  ROC = cv_summary$statistics$ROC[, "Mean"]
+)
+
+cv_df
+```
+
+```{r, echo=FALSE}
+# Function to calculate test set performance metrics
+eval_metrics <- function(model, test_data, model_name) {
+  
+  probs <- predict(model, newdata = test_data, type = "prob")
+  preds <- predict(model, newdata = test_data)
+  
+  roc_obj <- roc(
+    response = test_data$Outcome,
+    predictor = probs$Diabetic,
+    levels = c("Not_Diabetic", "Diabetic")
+  )
+  
+  cm <- confusionMatrix(
+    preds,
+    test_data$Outcome,
+    positive = "Diabetic"
+  )
+  
+  tibble(
+    Model = model_name,
+    AUC = as.numeric(auc(roc_obj)),
+    Accuracy = as.numeric(cm$overall["Accuracy"]),
+    Sensitivity = as.numeric(cm$byClass["Sensitivity"]),
+    Specificity = as.numeric(cm$byClass["Specificity"])
+  )
+}
+
+# Create test results once so they can be reused
+test_results <- bind_rows(
+  eval_metrics(model_tree, test_data, "Decision Tree"),
+  eval_metrics(model_svm, test_data, "SVM"),
+  eval_metrics(model_knn, test_data, "KNN")
+)
+
+test_results
+```
+
+```{r, echo=FALSE}
+# Bar plot of cross-validation ROC/AUC by model
+ggplot(cv_df, aes(x = Model, y = ROC, fill = Model)) +
+  geom_col() +
+  labs(
+    title = "Cross-Validation ROC/AUC by Model",
+    x = "Model",
+    y = "Average ROC/AUC"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("honeydew4", "lightsalmon3", "wheat3")) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The cross-validation results provide an initial comparison of model performance, but final evaluation should be based on the test set because the test set represents unseen data. The next steps calculate test set results, use them to identify the best-performing model, and then evaluate whether that model performs consistently across gender groups.
+
+### **Fairness and Bias Evaluation**
+
+While exploratory analysis highlighted differences in diabetes prevalence across age and gender groups, it is equally important to assess whether predictive models perform consistently across these populations. Even when overall prevalence appears similar, machine learning models can still exhibit unequal performance due to learned patterns in the data.
+
+To evaluate this, model fairness was assessed across gender groups using accuracy, sensitivity, and specificity. The model with the highest test set AUC was selected for the fairness analysis:
+
+```{r, echo=FALSE}
+# Select best model by highest test AUC
+best_model_name <- test_results %>%
+  arrange(desc(AUC)) %>%
+  slice(1) %>%
+  pull(Model)
+
+best_model <- if (best_model_name == "Decision Tree") {
+  model_tree
+} else if (best_model_name == "SVM") {
+  model_svm
+} else {
+  model_knn
+}
+
+best_model_name
+```
+
+#### **Evaluating Model Performance by Gender**
+
+The fairness analysis shows whether model performance differs across gender groups. Similar sensitivity values suggest that the model identifies diabetic individuals at comparable rates across genders. Differences in specificity, however, may indicate that one group experiences more false positives than the other. Because healthcare predictions can influence screening, follow-up care, and patient communication, even modest performance differences should be considered when interpreting model results.
+
+```{r, echo=FALSE}
+# Evaluate model performance by gender
+fairness_df <- test_data %>%
+  mutate(
+    predicted = predict(best_model, newdata = test_data),
+    actual = Outcome
+  )
+
+fairness_by_gender <- fairness_df %>%
+  group_by(Sex) %>%
+  summarise(
+    n = n(),
+    Accuracy = mean(predicted == actual),
+    Sensitivity = sum(predicted == "Diabetic" & actual == "Diabetic") / sum(actual == "Diabetic"),
+    Specificity = sum(predicted == "Not_Diabetic" & actual == "Not_Diabetic") / sum(actual == "Not_Diabetic"),
+    .groups = "drop"
+  )
+
+fairness_by_gender
+```
+
+```{r, echo=FALSE}
+# Visualize fairness metrics by gender
+fairness_long <- fairness_by_gender %>%
+  pivot_longer(
+    cols = c(Accuracy, Sensitivity, Specificity),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+ggplot(fairness_long, aes(x = Sex, y = Value, fill = Metric)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Model Performance by Gender",
+    x = "Gender",
+    y = "Metric Value",
+    fill = "Metric"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("lightsteelblue4", "lightcyan3", "mistyrose4")) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+### **Test Set Model Evaluation**
+
+After identifying the best-performing model and evaluating fairness across demographic groups, the final step is to assess overall model performance on unseen data. This provides a realistic measure of how well each model would perform in a real-world setting, where predictions must generalize beyond the training data.
+
+The test set results show how each model performs using accuracy, sensitivity, specificity, and ROC/AUC. Accuracy measures overall correctness, but because diabetes classification involves meaningful clinical consequences, sensitivity and specificity are especially important. Sensitivity reflects how well the model identifies diabetic individuals, while specificity reflects how well it identifies non-diabetic individuals.
+
+```{r, echo=FALSE}
+# Print test results
+test_results
+```
+
+```{r, echo=FALSE}
+# Create long-format results for plotting
+test_results_long <- test_results %>%
+  pivot_longer(
+    cols = c(AUC, Accuracy, Sensitivity, Specificity),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# Visualize test set model performance
+ggplot(test_results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Test Set Model Performance Comparison",
+    x = "Model",
+    y = "Metric Value",
+    fill = "Evaluation Metric"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("lightsteelblue4", "rosybrown3", "lightcyan3", "mistyrose4")) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The test set comparison shows which model generalizes best to unseen data. The model with the highest AUC has the strongest overall ability to distinguish between diabetic and non-diabetic individuals. Sensitivity should be prioritized for this clinical task because missing a true diabetes case may delay diagnosis, treatment, and prevention of complications. However, specificity remains important because false positives may lead to unnecessary follow-up screening.
+
+Overall, the best model should be viewed as a screening support tool rather than a standalone diagnostic system. A model that performs well can help identify individuals who may benefit from further evaluation, but clinical review and confirmatory testing are still necessary before making medical decisions.
+
+## **Conclusion**
+
+This analysis demonstrates that diabetes risk is influenced by a combination of lifestyle, physiological, and demographic factors. The exploratory analysis identified strong relationships between diabetes prevalence and high blood pressure, high cholesterol, BMI, physical activity, and age. The feature importance analysis reinforced these findings by showing that high blood pressure, BMI, and high cholesterol were among the most influential lifestyle-related predictors of diabetes risk. 
+
+These findings highlight the importance of preventative healthcare and targeted intervention strategies. Individuals with higher-risk health profiles--particularly those with cardiovascular-related conditions, higher BMI, or lower levels of physical activity--may benefit from earlier screening, lifestyle counseling, and preventative care programs. By identifying which factors are most strongly associated with diabetes, healthcare providers and public health professionals can better focus resources toward populations at greater risk. 
+
+The predictive modeling results showed that all three machine learning models achieved moderate classification performance, with the support vector machine (SVM) generally performing best overall based on ROC/AUC during both cross-validation and test set evaluation. This suggests that the SVM model was most effective at distinguishing between diabetic and non-diabetic individuals within this dataset.
+
+From a clinical perspective, sensitivity is especially important because failing to identify a true diabetes case could delay diagnosis, treatment, and preventative intervention. While the best-performing model may serve as a useful screening-support tool, it should not be used as a standalone diagnostic system. Instead, predictive models should complement clinical judgment and be followed by additional medical evaluation or confirmatory testing.
+
+The fairness analysis also demonstrated the importance of evaluating whether predictive models perform consistently across demographic groups. Although gender differences in performance were relatively modest, slight variations in accuracy, sensitivity, or specificity could still affect how equitably patients are identified and treated. This emphasizes the need for fairness checks and responsible implementation when applying machine learning in healthcare settings.
+
+Overall, this report demonstrates the potential of machine learning to support early diabetes risk detection and preventative healthcare efforts. Predictive models can help identify high-risk individuals before complications develop, allowing for earlier intervention and more personalized care. However, these models must be carefully validated, interpreted responsibly, and evaluated for fairness to ensure accurate and ethical clinical decision-making.
+
+
+
+
+.
